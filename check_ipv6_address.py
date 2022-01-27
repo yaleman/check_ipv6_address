@@ -85,16 +85,15 @@ for interface in resultdata:
 
     for address in interface.get("addr_info"):
         if address.get("deprecated") or address.get("scope") == "link" or address.get("family") == "inet" or not address.get("mngtmpaddr"):
-            #logger.debug("Skipping interface: %s", address.get("local"))
+            logger.debug("Skipping interface: %s", address.get("local"))
             continue
         try:
-            parsed_ipv6_address = IPv6Address(interface.get("local"))
+            parsed_ipv6_address = IPv6Address(address.get("local"))
             if parsed_ipv6_address in ULA:
-                logger.error("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+                logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
                 continue
-            logger.error("%s is not a ULA", parsed_ipv6_address)
         except AddressValueError as addressvalue:
-            logger.error("%s did not parse as ipv6", interface.get('local'))
+            logger.debug("%s did not parse as ipv6", address.get('local'))
         found_addresses.append(address)
 
 if not found_addresses:
@@ -102,8 +101,6 @@ if not found_addresses:
     sys.exit(1)
 
 if len(found_addresses) >1:
-
-    # ERROR:root:[{"family": "inet6", "local": "fd6a:cea4:1867:4ecb:f006:7ff:feff:8a10", "prefixlen": 64, "scope": "global", "dynamic": true, "mngtmpaddr": true, "valid_life_time": 1786, "preferred_life_time": 297}, {"family": "inet6", "local": "2403:580a:2d:0:f006:7ff:feff:8a10", "prefixlen": 64, "scope": "global", "dynamic": true, "mngtmpaddr": true, "valid_life_time": 86387, "preferred_life_time": 14387}]
     dumping = json.dumps(found_addresses, default=str, ensure_ascii=False)
     logger.error("More than one management address, that's scary! Found the following: %s", dumping)
     sys.exit(1)
