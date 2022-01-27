@@ -90,10 +90,11 @@ for interface in resultdata:
         try:
             parsed_ipv6_address = IPv6Address(interface.get("local"))
             if parsed_ipv6_address in ULA:
-                logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+                logger.error("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
                 continue
+            logger.error("%s is not a ULA", parsed_ipv6_address)
         except AddressValueError as addressvalue:
-            logger.debug("%s did not parse as ipv6", interface.get('local'))
+            logger.error("%s did not parse as ipv6", interface.get('local'))
         found_addresses.append(address)
 
 if not found_addresses:
