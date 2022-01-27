@@ -3,7 +3,7 @@
 """ Compares a TXT record to the local ipv6 network interface to see if the network address matches. Convoluted test for if the network has changed. Outputs in nagios-compatible thingies.
 """
 
-from ipaddress import ip_network, IPv6Network
+from ipaddress import ip_network, IPv6Network, IPv6Address, AddressValueError
 import json
 from json.decoder import JSONDecodeError
 import logging
@@ -40,6 +40,8 @@ if not '.' in sys.argv[-1] or sys.argv[-1] in ("-d", "--debug"):
 
 CMD="/usr/bin/ip"
 DIG_COMMAND = "/usr/bin/dig"
+
+ULA = IPv6Network("fc00::/7")
 
 def get_txt_record(hostname):
     """ gets the network ipv6 address """
@@ -80,6 +82,13 @@ for interface in resultdata:
     if interface.get("operstate") != "UP":
         logger.debug("Skipping down interface: %s", interface.get("ifname"))
         continue
+    try:
+        parsed_ipv6_address = IPv6Address(interface.get("local"))
+        if parsed_ipv6_address in ULA:
+            logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+            continue
+    except AddressValueError as addressvalue:
+        logger.debug("%s did not parse as ipv6", interface.get('local'))
     for address in interface.get("addr_info"):
         if address.get("deprecated") or address.get("scope") == "link" or address.get("family") == "inet" or not address.get("mngtmpaddr"):
             #logger.debug("Skipping interface: %s", address.get("local"))
@@ -91,7 +100,10 @@ if not found_addresses:
     sys.exit(1)
 
 if len(found_addresses) >1:
-    logger.error("More than one management address, that's scary! %s", ",".join(found_addresses))
+
+    # ERROR:root:[{"family": "inet6", "local": "fd6a:cea4:1867:4ecb:f006:7ff:feff:8a10", "prefixlen": 64, "scope": "global", "dynamic": true, "mngtmpaddr": true, "valid_life_time": 1786, "preferred_life_time": 297}, {"family": "inet6", "local": "2403:580a:2d:0:f006:7ff:feff:8a10", "prefixlen": 64, "scope": "global", "dynamic": true, "mngtmpaddr": true, "valid_life_time": 86387, "preferred_life_time": 14387}]
+    dumping = json.dumps(found_addresses, default=str, ensure_ascii=False)
+    logger.error("More than one management address, that's scary! Found the following: %s", dumping)
     sys.exit(1)
 
 address = found_addresses[0]
