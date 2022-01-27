@@ -82,17 +82,18 @@ for interface in resultdata:
     if interface.get("operstate") != "UP":
         logger.debug("Skipping down interface: %s", interface.get("ifname"))
         continue
-    try:
-        parsed_ipv6_address = IPv6Address(interface.get("local"))
-        if parsed_ipv6_address in ULA:
-            logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
-            continue
-    except AddressValueError as addressvalue:
-        logger.debug("%s did not parse as ipv6", interface.get('local'))
+
     for address in interface.get("addr_info"):
         if address.get("deprecated") or address.get("scope") == "link" or address.get("family") == "inet" or not address.get("mngtmpaddr"):
             #logger.debug("Skipping interface: %s", address.get("local"))
             continue
+        try:
+            parsed_ipv6_address = IPv6Address(interface.get("local"))
+            if parsed_ipv6_address in ULA:
+                logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+                continue
+        except AddressValueError as addressvalue:
+            logger.debug("%s did not parse as ipv6", interface.get('local'))
         found_addresses.append(address)
 
 if not found_addresses:
