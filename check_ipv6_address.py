@@ -8,119 +8,136 @@ import json
 from json.decoder import JSONDecodeError
 import logging
 import os
+from pathlib import Path
+from typing import Any, Dict, List
+
 import sys
 
-if '-d' in sys.argv:
-    logging.basicConfig(level=logging.DEBUG)
-elif '-h' in sys.argv or '--help' in sys.argv:
-    print("""Usage: check_ipv6_address.py [OPTION] HOSTNAME
+import click
 
-Where HOSTNAME is a TXT record to look up which has the IPv6 network you're checking.
+def setup_logging(debug: bool):
+    """ setup logging """
 
-Example: check_ipv6_address.py _network.example.com
+    logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
-Options:
+    return logging.getLogger()
 
--h, --help\tShow this help message
--d, --debug\tShow debug output
-""")
-    sys.exit(0)
-else:
-    logging.basicConfig(level=logging.INFO)
-
-logger = logging.getLogger()
-
-if len(sys.argv) == 1:
-    logger.error("Please pass a hostname to look up!")
-    sys.exit(1)
-
-if not '.' in sys.argv[-1] or sys.argv[-1] in ("-d", "--debug"):
-    logger.error("Please pass a hostname to look up, got: '%s'", sys.argv[-1])
-    sys.exit(1)
-
-CMD="/usr/bin/ip"
-DIG_COMMAND = "/usr/bin/dig"
-
-ULA = IPv6Network("fc00::/7")
-
-def get_txt_record(hostname):
+def get_txt_record(logger, hostname: str) -> str:
     """ gets the network ipv6 address """
-    if not os.path.exists(DIG_COMMAND):
-        logger.error("Failed to find dig at %s, bailing", DIG_COMMAND)
-        return False
-    full_command = f"{DIG_COMMAND} +short TXT {hostname}"
+
+    dig_command = Path("/usr/bin/dig")
+    if not dig_command.exists():
+        logger.error("Failed to find dig at %s, bailing", dig_command.resolve().as_posix())
+        sys.exit(1)
+
+    full_command = f"{dig_command.resolve().as_posix()} +short TXT {hostname}"
     digresult = os.popen(full_command)
 
     dig_result = digresult.read().strip().replace("\"", "")
     if not dig_result:
         logger.error("Empty result from command: %s", full_command)
-        return False
+        sys.exit(1)
     return dig_result
 
-for command in [DIG_COMMAND, CMD]:
-    if not os.path.exists(command):
-        logger.error("Cannot find %s, bailing!", command)
+def get_interfaces(logger) -> List[Dict[str, Any]]:
+    """ returns a list of interfaces from the result of 'ip -j add show' """
+    ipcmd=Path("/usr/bin/ip")
+    if not ipcmd.exists():
+        logger.error("Failed to find ip at %s, bailing", ipcmd.resolve().as_posix())
         sys.exit(1)
 
-result = os.popen(f"{CMD} -j add show")
+    result = os.popen(f"{ipcmd} -j add show")
+    resultstring = result.read()
 
-resultstring = result.read()
+    try:
+        resultdata = json.loads(resultstring)
+    except JSONDecodeError as error_message:
+        logger.error("Failed to decode JSON: %s", error_message)
+        logger.error("Input data:\n %s", resultstring)
+        sys.exit(1)
+    if not resultdata:
+        logger.error("Found no interfaces, bailing")
+        sys.exit(1)
+    return resultdata
 
-try:
-    resultdata = json.loads(resultstring)
-except JSONDecodeError as error_message:
-    logger.error("Failed to decode JSON: %s", error_message)
-    logger.error("Input data:\n %s", resultstring)
-    sys.exit(1)
+ULA_RANGE = IPv6Network("fc00::/7")
 
-found_addresses = []
+def is_ula(logger: logging.Logger, address: Dict[str, Any]) -> bool:
+    """ checks if it's an IPv6 ULA """
+    try:
+        parsed_ipv6_address = IPv6Address(address.get("local"))
+        if parsed_ipv6_address in ULA_RANGE:
+            logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+            return True
+    except AddressValueError as addressvalue:
+        logger.debug(
+            "%s did not parse as ipv6: %s",
+            address.get('local'),
+            addressvalue
+            )
+    return False
 
-for interface in resultdata:
-    if "LOOPBACK" in interface.get("flags"):
-        logger.debug("Skipping loopback: %s", interface.get("ifname"))
-        continue
-    if interface.get("operstate") != "UP":
-        logger.debug("Skipping down interface: %s", interface.get("ifname"))
-        continue
+@click.command()
+@click.argument("hostname")
+@click.option("--debug", "-d", is_flag=True, help="Debug mode.")
+def cli(hostname: str, debug: bool):
+    """ Command line interface """
+    logger = setup_logging(debug)
 
-    for address in interface.get("addr_info"):
-        if address.get("deprecated") or address.get("scope") == "link" or address.get("family") == "inet" or not address.get("mngtmpaddr"):
-            logger.debug("Skipping interface: %s", address.get("local"))
+
+    interfaces = get_interfaces(logger)
+    txtrecord = get_txt_record(logger, hostname)
+
+    found_addresses = []
+
+    for interface in interfaces:
+        if "addr_info" not in interface:
+            logger.debug("No address information, skipping.")
             continue
-        try:
-            parsed_ipv6_address = IPv6Address(address.get("local"))
-            if parsed_ipv6_address in ULA:
-                logger.debug("%s is a Unique Local Address, skipping.", parsed_ipv6_address)
+
+        if "flags" in interface and "LOOPBACK" in interface["flags"]:
+            logger.debug("Skipping loopback: %s", interface.get("ifname"))
+            continue
+        if interface.get("operstate") != "UP":
+            logger.debug("Skipping down interface: %s", interface.get("ifname"))
+            continue
+
+
+        for address in interface["addr_info"]:
+            if address.get("deprecated") or address.get("scope") == "link" or address.get("family") == "inet" or not address.get("mngtmpaddr"):
+                logger.debug("Skipping interface: %s", address.get("local"))
                 continue
-        except AddressValueError as addressvalue:
-            logger.debug("%s did not parse as ipv6", address.get('local'))
-        found_addresses.append(address)
+            if not is_ula(logger, address):
+                found_addresses.append(address)
 
-if not found_addresses:
-    logger.error("Couldn't find an IPv6 managment address, bailing")
-    sys.exit(1)
+    if not found_addresses:
+        logger.error("Couldn't find an IPv6 managment address, bailing")
+        sys.exit(1)
 
-if len(found_addresses) >1:
-    dumping = json.dumps(found_addresses, default=str, ensure_ascii=False)
-    logger.error("More than one management address, that's scary! Found the following: %s", dumping)
-    sys.exit(1)
+    if len(found_addresses) >1:
+        dumping = json.dumps(found_addresses, default=str, ensure_ascii=False)
+        logger.error("More than one management address, that's scary! Found the following: %s", dumping)
+        sys.exit(1)
 
-address = found_addresses[0]
-logger.debug(json.dumps(address))
-to_parse = f"{address.get('local')}/{address.get('prefixlen')}"
-logger.debug("PARSING: %s", to_parse)
+    address = found_addresses[0]
+    logger.debug(json.dumps(address))
+    to_parse = f"{address.get('local')}/{address.get('prefixlen')}"
+    logger.debug("PARSING: %s", to_parse)
 
-network = ip_network(to_parse, strict=False)
-if not isinstance(network, IPv6Network):
-    logger.error("Not sure what went on, but %s is not an instance of IPv6Network", network)
-    logger.debug(type(network))
-    sys.exit(1)
-logger.debug("Network address: %s", network.network_address)
+    network = ip_network(to_parse, strict=False)
+    if not isinstance(network, IPv6Network):
+        logger.error("Not sure what went on, but %s is not an instance of IPv6Network", network)
+        logger.debug(type(network))
+        sys.exit(1)
+    logger.debug("Network address: %s", network.network_address)
 
-txtrecord = get_txt_record(sys.argv[-1])
-logger.debug("TXT record     : %s", txtrecord)
 
-if str(network.network_address) != txtrecord:
-    print(f"CRITICAL: Address should be '{txtrecord}', is '{network.network_address}'")
-else:
-    print(f"OK: Address is '{txtrecord}'")
+    logger.debug("TXT record     : %s", txtrecord)
+
+    if str(network.network_address) != txtrecord:
+        print(f"CRITICAL: Address should be '{txtrecord}', is '{network.network_address}'")
+    else:
+        print(f"OK: Address is '{txtrecord}'")
+
+if __name__ == "__main__":
+    cli() # pylint: disable=no-value-for-parameter

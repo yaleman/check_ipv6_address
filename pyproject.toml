@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "check_ipv6_address"
+version = "0.1.0"
+description = "A nagios check for finding the local subnet."
+authors = ["James Hodgkinson <james@terminaloutcomes.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+click = "^8.0.3"
+
+[tool.poetry.dev-dependencies]
+mypy = "^0.931"
+pylint = "^2.12.2"
+pytest = "^6.2.5"
+black = "^21.12b0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+'check_ipv6_address' = 'check_ipv6_address.py:cli()'
