@@ -5,8 +5,7 @@ to see if the network address matches.
 
 Convoluted test for "has the network changed". Outputs in nagios-compatible thingies.
 """
-
-from distutils.spawn import find_executable
+import shutil
 from ipaddress import ip_network, IPv6Network, IPv6Address, AddressValueError
 import json
 from json.decoder import JSONDecodeError
@@ -14,9 +13,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
-
 import sys
-
 import click
 
 
@@ -30,7 +27,7 @@ def setup_logging(debug: bool) -> logging.Logger:
 def get_txt_record(logger: logging.Logger, hostname: str) -> str:
     """gets the network ipv6 address"""
 
-    dig = find_executable("dig")
+    dig = shutil.which("dig")
     if dig is None:
         logger.error(
             "Failed to find dig command in path, bailing",
@@ -51,7 +48,7 @@ def get_txt_record(logger: logging.Logger, hostname: str) -> str:
 
 def get_interfaces(logger: logging.Logger) -> List[Dict[str, Any]]:
     """returns a list of interfaces from the result of 'ip -j add show'"""
-    ipcmd_path = find_executable("ip")
+    ipcmd_path = shutil.which("ip")
     if ipcmd_path is None:
         logger.error("Failed to find 'ip' command, bailing")
         raise FileNotFoundError("Failed to find 'ip' command in path, bailing")
