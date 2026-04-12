@@ -16,6 +16,7 @@ check_ipv6_address = "check_ipv6_address:cli"
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
     "ruff>=0.15.7",
     "ty>=0.0.24",
 ]
